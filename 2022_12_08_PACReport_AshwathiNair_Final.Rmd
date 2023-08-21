@@ -1,0 +1,129 @@
+---
+title: "Predictive Analysis Competition"
+output: html_document
+date: "2022-12-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Summary
+
+The Predictive Analysis Competition helped me understand and apply the concepts learnt in Applied Analytics Frameworks and Methods better. It helped me think logically about the supervised machine learning methods taught in class. Unlike the assignments, there was more freedom to play around with the dataset. I followed a methodical approach from start to end and this helped me relate to the data better.
+
+
+### Initial Data Analysis
+
+After importing the file in R, I studied the structure of the songs data by using the str() function and summary statistics using the skim() function. I then observed how each variable was represented using the head() function. I also counted the distinct values in genre, performer, and song variable columns. They had 2938, 6687 & 16542 distinct line items respectively. However, counting this for genre did not make sense as within those 2938 as well, there would have been multiple distinct genres. 
+
+After the sample submission, I split the data into train and test (70:30). I did so as that should be the first step in any kind of predictive analysis. Once the model is prepared on train, it must be applied to the test data to check if it is overfitting and only then should it be released for use on unseen data, scoringData in our case. I understood that Kaggle at its end has the actuals for the scoringData against which it compares our predictions and calculates the RMSE.
+
+
+### Data Exploration
+
+I first created an LM model with all variables but it seemed to take very long to run, as it had many (k) unique values and hence created many (k-1) dummies. I started with a linear model without the initial variables id, performer, song and genre (as they had many distinct values) and then a generalized additive model to check if it improved my RMSE over the linear model. However, I stopped when I realized that I had not done an analysis of my individual variables against ‘rating’ to see their relationships. 
+
+I then calculated the correlation between my independent variables with rating which was my dependent variable. I then created linear plots for all my variables only to realize that not many of them showed linear relationships. I also used polynomial regression to check if a quadratic relationship existed. All variables (except id, performer, song, genre) showed slightly non-linear relationship but track_duration, loudness and speechiness showed highly non-linear correlation with rating. Track duration improved rating until 1.2*10^6 units and then exponentially came down. Speechiness improved rating until 0.3 units and then exponentially came down as well. The opposite was observed for loudness; it reduced the rating until -18 units and then started to increase non-linearly.
+
+
+### Data Tidying
+
+I then did a linear model and a generalized additive model based on my understanding of the exploratory data analysis. I did not perform polynomial regression as the GAM would accommodate higher level polynomial relationships as well.  However, I realized that I could also use ‘genre’ if I am able to reduce the dummy variables it created based on my domain knowledge. I reduced this column as per my understanding of genre into 25 main genres by using ‘for loop’ and ‘ifelse function’. I did the same with scoringData and I removed the NAs from the same column. Then I used the same 2 modelling techniques as above to get RMSEs. The one with GAM improved the RMSE over LM. Also, these two models had better RMSEs than the ones without ‘genre’. In all these steps I had converted my categorical variables into factor directly within the model. At this stage, I converted all of them into factors within the data frame itself.
+
+
+### Further Data Modelling
+
+I then performed feature selection on the variables in my gam model to check which combination would give me the best RMSE. Forward, backward, and stepwise selection gave me a set of variables, which when applied to my GAM model improved my RMSE further. However, it showed a higher RMSE on my scoringData meaning that it overfit my train data. Therefore, I could not use them further. 
+
+I then moved on to Decision trees. However, this worsened my RMSE. I then performed ensemble selection and tuned my model using multiple combinations of different attributes. Ultimately tuned randomForest helped me get the best RMSE for my data. Ranger and gbm showed much higher RMSE on test than train, meaning that they overfit the train data so I could not use them either. Other models did not improve my RMSE. Following is the code for the successful tuned randomForest model.
+
+```{r echo=TRUE, eval=FALSE}
+
+#Tuned randomForest
+trControl_tuned_rf = trainControl(method = 'cv', number = 5)
+
+tuneGrid_tuned_rf = expand.grid(mtry = 1:15)
+
+set.seed(1031)
+
+forest_cv = train(rating~genre2+track_duration+track_explicit+danceability+energy+key+loudness+mode+speechiness+acousticness+instrumentalness+liveness+valence+tempo+time_signature, 
+                  data = train_latest, 
+                  method = 'rf', 
+                  trControl = trControl_tuned_rf, 
+                  tuneGrid = tuneGrid_tuned_rf, 
+                  ntree = 100)
+
+forest_cv$bestTune$mtry
+
+
+set.seed(1031)
+
+cvforest = randomForest(rating~genre2+track_duration+track_explicit+danceability+energy+key+loudness+mode+speechiness+acousticness+instrumentalness+liveness+valence+tempo+time_signature, 
+                        data = train_latest, 
+                        mtry = forest_cv$bestTune$mtry, 
+                        ntree = 600) 
+
+pred_tuned_rf_train = predict(cvforest)
+
+rmse_train_tuned_rf = sqrt(mean((pred_tuned_rf_train - train_latest$rating)^2))
+
+rmse_train_tuned_rf
+
+pred_tuned_rf_test = predict(cvforest, newdata= test_latest)
+
+rmse_test_tuned_rf = sqrt(mean((pred_tuned_rf_test - test_latest$rating)^2))
+
+rmse_test_tuned_rf
+
+#RMSE Train: 15.01917
+
+#RMSE Test: 15.01529
+
+#RMSE improved
+
+summary(pred_tuned_rf_test)
+str(pred_tuned_rf_test)
+skim(pred_tuned_rf_test)
+# Calculate adjusted R-squared for test
+n <- nrow(test_latest)
+p <- ncol(test_latest) - 1  # Subtract 1 for the target variable
+R_squared <- 1 - sum((test_latest$rating - pred_tuned_rf_test)^2) / sum((test_latest$rating - mean(test_latest$rating))^2)
+adjusted_R_squared <- 1 - ((1 - R_squared) * (n - 1)) / (n - p - 1)
+
+adjusted_R_squared
+# Calculate adjusted R-squared for train
+n2 <- nrow(train_latest)
+p2 <- ncol(train_latest) - 1  # Subtract 1 for the target variable
+R_squared2 <- 1 - sum((train_latest$rating - pred_tuned_rf_train)^2) / sum((train_latest$rating - mean(train_latest$rating))^2)
+adjusted_R_squared2 <- 1 - ((1 - R_squared2) * (n2 - 1)) / (n2 - p2 - 1)
+
+adjusted_R_squared2
+
+
+#Equating levels of songs & scoringData
+
+levels(scoringData$time_signature) <- levels(songs$time_signature)
+
+levels(scoringData$time_explicit) <- levels(songs$time_explicit)
+
+levels(scoringData$key) <- levels(songs$key)
+
+levels(scoringData$mode) <- levels(songs$mode)
+
+levels(scoringData$genre2) <- levels(songs$genre2)
+
+
+pred_tuned_rf_scoringData = predict(cvforest,newdata=scoringData)
+
+submissionFile7 = data.frame(id = scoringData$id, rating = pred_tuned_rf_scoringData)
+
+write.csv(submissionFile7, 'submission7.csv',row.names = F)
+
+#RMSE scoringData (Public: 15.02365, Private: 15.04927)
+
+```
+
+### Conclusion
+
+Overall, this project helped build perspective of applied statistics, machine learning and data modelling. It was a very fruitful experience overall. If I would have had another chance, I would try to improve my models by further cleaning and transforming my data and splitting the column ‘genre’ into individual genres within and creating dummy variables out of it all.
